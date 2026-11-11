@@ -17,6 +17,43 @@ GENERIC_FACET_CONTEXT = {
     'criteria', 'criterion', 'rule', 'rules',
 }
 
+PRODUCT_HEADINGS = {
+    'personal loan': {'personal loan', 'personal loans'},
+    'home loan': {'home loan', 'home loans'},
+    'business loan': {'business loan', 'business loans'},
+    'loan against property': {'loan against property', 'loan against properties', 'lap'},
+}
+
+
+def product_context_matches(product, unit):
+    """Require an explicit product section when the caller names a product.
+
+    A chunk can mention "personal loans" while actually answering a LAP or home
+    loan question. Treating that incidental mention as a match caused plausible
+    but incorrect answers for common follow-up questions such as interest rate
+    and eligibility.
+    """
+    if not product:
+        return True
+    # The gateway's broad agent scope is intentionally named "loan". It is
+    # already enforced by metadata and must not be treated as a heading.
+    if product == 'loan':
+        return True
+    chunk = unit.get('chunk') or {}
+    context = f"{unit.get('context', '')} {unit.get('text', '')} {chunk.get('title', '')} {chunk.get('source', '')}".lower()
+    terms_for_product = PRODUCT_HEADINGS.get(product, {product})
+    major = f"{unit.get('context', '').split(' / ')[0]} {chunk.get('title', '')} {chunk.get('source', '')}".lower()
+    if any(term in major for term in terms_for_product):
+        return True
+    # A line-level product mention is acceptable only when it is not comparing
+    # against another named loan section.
+    conflicting = [name for name in PRODUCT_HEADINGS if name != product and any(term in major for term in PRODUCT_HEADINGS[name])]
+    if conflicting:
+        return False
+    # Shared headings such as DOCUMENTS REQUIRED are valid for a named
+    # product when no conflicting product section is present.
+    return True
+
 
 def terms(text):
     return {ALIASES.get(t, t) for t in re.findall(r'[a-z0-9]+', text.lower()) if t not in STOP and len(t) > 1}
@@ -61,6 +98,8 @@ def extract_supported_answer(query, chunks):
         if facet <= q:
             facets.append(facet)
     documents = bool(q & {'document', 'kyc'}) and not facets
+    if not facets and q & {'eligibility', 'eligible', 'qualification', 'qualify', 'criteria'}:
+        facets.append({'eligibility'})
     options = 'loan' in q and bool(q & {'option', 'options', 'type', 'types'})
     # Named institutions and loan types must not silently select another source.
     institutions = [name for name in ('tata', 'bajaj', 'hdfc', 'sbi', 'home credit', 'adira') if name in query.lower()]
@@ -94,10 +133,8 @@ def extract_supported_answer(query, chunks):
             if key in seen:
                 continue
             seen.add(key)
-            if product:
-                named_types = [name for name in ('personal loan', 'home loan', 'business loan', 'loan against property') if name in unit['match'].lower()]
-                if named_types and product not in named_types:
-                    continue
+            if product and not product_context_matches(product, unit):
+                continue
             matched = terms(unit['match'])
             direct = terms(unit['text'])
             hits = len(q & matched)
@@ -116,12 +153,16 @@ def extract_supported_answer(query, chunks):
                 if 'loan' not in terms(unit['context']) or not re.search(r'\b(?:offers?|loan|collateral|borrow)\b', unit['text'], re.I):
                     continue
             elif facets:
-                if not any(facet <= matched for facet in facets):
+                if not any(facet <= matched or any(term in unit['context'].lower() for term in PRODUCT_HEADINGS.get(product, ())) for facet in facets):
                     continue
             elif len(q & matched) < min(2, len(q)):
                 continue
             # Exact field/definition matches beat incidental mentions in scripts.
             score = hits + 2 * len(q & direct)
+            if product and product != 'loan':
+                major_text = f"{unit['context']} {unit['chunk'].get('title', '')} {unit['chunk'].get('source', '')}".lower()
+                if any(term in major_text for term in PRODUCT_HEADINGS.get(product, ())):
+                    score += 6
             field = unit['text'].split(':')[0] if ':' in unit['text'] else ''
             heading = unit['context'].split(' / ')[-1]
             if '?' in heading or len(heading.split()) > 8:
