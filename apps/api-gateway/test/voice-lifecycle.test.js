@@ -277,6 +277,7 @@ test('voice sessions, handoff, archive and restart', { timeout: 30000 }, async (
     const turn = await api('/query', { call_id: 'handoff-nudge', query: 'I need to speak to a supervisor right now' });
     assert.equal(turn.status, 200);
     assert.equal(requests, before);
+    assert.equal(turn.data.escalation.priority, 'HIGH');
     let nudges = [];
     for (let attempt = 0; attempt < 20 && !nudges.length; attempt += 1) {
       nudges = (await api('/../nudges?call_id=handoff-nudge')).data.nudges;

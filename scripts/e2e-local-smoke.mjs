@@ -98,8 +98,43 @@ try {
   const nudges = await api(`/api/nudges?call_id=${handoffId}`);
   const handoffs = await api('/api/handoffs?state=open');
 
+  // The recording-ready product path keeps grounding, approval, live insights,
+  // and human handoff in one uninterrupted call. Verify the in-call state
+  // before archiving it, rather than only proving those features independently.
+  const liveId = 'full-flow-live-voice';
+  const liveCreated = await api('/api/voice/session', 'POST', {
+    call_id: liveId, market: 'india-loan', language: 'en-IN', channel: 'voice',
+  });
+  const liveGrounded = await api('/api/voice/query', 'POST', {
+    call_id: liveId, market: 'india-loan',
+    query: 'What is the minimum age requirement for a loan?', guided_mode: false,
+  });
+  const livePlaybook = await api(`/api/voice/session/${liveId}/playbook`);
+  const liveGuided = await api('/api/voice/query', 'POST', {
+    call_id: liveId, market: 'india-loan',
+    query: 'What documents are required for a personal loan?', guided_mode: true,
+  });
+  const liveApplied = await api(
+    `/api/voice/session/${liveId}/nudges/${liveGuided.suggestion.id}/apply`,
+    'POST',
+    {},
+  );
+  const liveBeforeHandoff = await api(`/api/voice/session/${liveId}`);
+  const liveSnapshotBeforeHandoff = await api('/api/voice/live');
+  const liveHandoff = await api('/api/voice/query', 'POST', {
+    call_id: liveId, market: 'india-loan',
+    query: 'I need to speak to a supervisor right now', guided_mode: false,
+  });
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 1200));
+  const liveDuringHandoff = await api(`/api/voice/session/${liveId}`);
+  const liveSnapshotDuringHandoff = await api('/api/voice/live');
+  const liveNudges = await api(`/api/nudges?call_id=${liveId}`);
+  const liveHandoffs = await api('/api/handoffs?state=open');
+
   const ended = await api(`/api/voice/session/${groundedId}/end`, 'POST', {});
   const summary = await api(`/api/voice/history/${groundedId}/summary`);
+  const liveEnded = await api(`/api/voice/session/${liveId}/end`, 'POST', {});
+  const liveSummary = await api(`/api/voice/history/${liveId}/summary`);
   const result = {
     authenticated_admin: setup.user?.role === 'admin',
     session_created: created.session?.status === 'created',
@@ -111,6 +146,21 @@ try {
     realtime_escalation_nudge: nudges.nudges?.some((nudge) => nudge.type === 'human_escalation') === true,
     call_archived: ended.status === 'ended',
     summary_generated: summary.latest?.generator === 'deterministic_fallback.v2',
+    combined_session_created: liveCreated.session?.status === 'created',
+    combined_grounded_response: liveGrounded.response_kind === 'grounded' && liveGrounded.sources?.length > 0,
+    combined_playbook_visible: Boolean(livePlaybook.playbook),
+    combined_guidance_visible: liveGuided.response_kind === 'guided_suggestion' && Boolean(liveGuided.suggestion),
+    combined_guidance_applied: liveApplied.turn?.role === 'assistant',
+    combined_call_visible_before_handoff: liveBeforeHandoff.status === 'active'
+      && liveSnapshotBeforeHandoff.calls?.some((call) => call.call_id === liveId && call.status === 'active') === true,
+    combined_handoff_visible_before_end: Boolean(liveHandoff.escalation)
+      && liveDuringHandoff.status === 'escalated'
+      && liveSnapshotDuringHandoff.calls?.some((call) => call.call_id === liveId && call.status === 'escalated') === true,
+    combined_escalation_nudge_visible: liveNudges.nudges?.some((nudge) => nudge.type === 'human_escalation') === true,
+    combined_handoff_in_inbox: liveHandoffs.handoffs?.some((handoff) => handoff.call_id === liveId) === true,
+    combined_handoff_high_priority: liveHandoffs.handoffs?.some((handoff) => handoff.call_id === liveId && handoff.priority === 'HIGH') === true,
+    combined_call_archived: liveEnded.status === 'ended',
+    combined_summary_generated: liveSummary.latest?.generator === 'deterministic_fallback.v2',
   };
   if (Object.values(result).some((value) => !value)) throw new Error(`End-to-end check failed: ${JSON.stringify(result)}`);
   process.stdout.write(`${JSON.stringify(result)}\n`);

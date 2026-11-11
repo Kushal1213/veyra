@@ -212,19 +212,24 @@ function requestEscalation(session, reason) {
     persistHandoffEscalation(session, activeEscalation(session));
     return activeEscalation(session);
   }
+  const lastCustomerMessage = getLatestTurn(session, 'user');
+  // The insights detector is asynchronous. Preserve an urgent customer request
+  // on the durable handoff itself instead of waiting for detector-derived
+  // frustration to arrive after the inbox delivery has already been written.
+  const urgentRequest = /\b(?:supervisor|manager|complaint|urgent|immediately|right now)\b/i.test(lastCustomerMessage);
   const escalation = {
     escalation_id: uuidv4(),
     call_id: session.call_id,
     reason,
     trigger: 'human_request',
     customer_intent: session.state.intent,
-    last_customer_message: getLatestTurn(session, 'user'),
+    last_customer_message: lastCustomerMessage,
     sources: session.turns.filter((turn) => turn.role === 'assistant').at(-1)?.sources || [],
     missing_information: [...session.state.missing_fields],
     conversation_summary: buildSummary(session),
     confidence: session.state.confidence,
     timestamp: new Date().toISOString(),
-    priority: session.state.frustration_level >= 0.5 ? 'HIGH' : 'NORMAL',
+    priority: urgentRequest || session.state.frustration_level >= 0.5 ? 'HIGH' : 'NORMAL',
   };
   session.status = 'escalated';
   session.state.current_stage = 'escalation';
