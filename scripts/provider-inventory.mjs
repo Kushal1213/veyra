@@ -154,7 +154,15 @@ export function buildInventory(options = {}) {
         name: 'Vapi',
         purpose: ['browser voice SDK', 'voice provider orchestration'],
         sdk: frontend.dependencies['@vapi-ai/web'] ? { package: '@vapi-ai/web', specifier: frontend.dependencies['@vapi-ai/web'] } : null,
-        environment: ['VAPI_API_KEY', 'VAPI_PHONE_NUMBER_ID', 'VITE_VAPI_PUBLIC_KEY', 'PUBLIC_WEBHOOK_URL'],
+        environment: [
+          'VAPI_API_KEY',
+          'VAPI_PHONE_NUMBER_ID',
+          'VITE_VAPI_PUBLIC_KEY',
+          'PUBLIC_WEBHOOK_URL',
+          'VOICE_SERVICE_TOKEN',
+          'VAPI_SERVER_CREDENTIAL_ID',
+          'VAPI_CUSTOM_LLM_CREDENTIAL_ID',
+        ],
         configured_defaults: {
           custom_llm_model: sourceIncludes('apps/api-gateway/src/routes/vapi-config.js', 'veyra-rag') ? 'veyra-rag' : null,
           fallback_llm_model: sourceIncludes('apps/api-gateway/src/routes/vapi-config.js', 'gpt-4o-mini') ? 'gpt-4o-mini' : null,

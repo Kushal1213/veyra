@@ -20,6 +20,13 @@ import {
 const PAGE_SIZE = 20;
 const buttonClass = 'btn';
 
+function formatElapsed(milliseconds) {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return null;
+  const totalSeconds = Math.floor(milliseconds / 1_000);
+  const minutes = Math.floor(totalSeconds / 60);
+  return `${minutes}:${String(totalSeconds % 60).padStart(2, '0')}`;
+}
+
 async function readJson(url, signal) {
   const response = await fetch(url, { signal });
   if (!response.ok)
@@ -277,7 +284,11 @@ export default function CallHistoryPage({ selectedId = null, onSelectCall }) {
                       <strong>
                         {turn.role === 'user' ? 'Customer' : 'Agent'}
                       </strong>
-                      <time>{new Date(turn.ts).toLocaleTimeString()}</time>
+                      <div className="flex items-center gap-2">
+                        {turn.sequence && <span>#{turn.sequence}</span>}
+                        {formatElapsed(turn.elapsed_ms) && <span>+{formatElapsed(turn.elapsed_ms)}</span>}
+                        <time>{new Date(turn.ts).toLocaleTimeString()}</time>
+                      </div>
                     </div>
                     <p className="message-content text-[13px] leading-7">
                       {turn.content}

@@ -8,6 +8,15 @@ ALIASES = {'salary': 'income', 'salaries': 'income', 'gaji': 'income', 'penghasi
            'paperwork': 'document', 'required': 'require', 'requirements': 'require', 'fees': 'fee',
            'tenure': 'tenor', 'loans': 'loan', 'policies': 'policy', 'rates': 'rate'}
 
+# These words give context to a field question but do not narrow the field
+# itself. Treating "requirement" as a strict qualifier meant that a natural
+# question such as "What is the minimum age requirement for a loan?" abstained
+# unless the evidence line happened to contain that exact word.
+GENERIC_FACET_CONTEXT = {
+    'require', 'requirement', 'eligibility', 'eligible', 'qualification', 'qualify',
+    'criteria', 'criterion', 'rule', 'rules',
+}
+
 
 def terms(text):
     return {ALIASES.get(t, t) for t in re.findall(r'[a-z0-9]+', text.lower()) if t not in STOP and len(t) > 1}
@@ -94,7 +103,10 @@ def extract_supported_answer(query, chunks):
             hits = len(q & matched)
             if facets:
                 facet_terms = set().union(*facets)
-                qualifiers = q - facet_terms - {'loan', 'insurance', 'personal', 'home', 'business', 'auto', 'car', 'vehicle', 'policy', 'finance'}
+                qualifiers = q - facet_terms - {
+                    'loan', 'insurance', 'personal', 'home', 'business', 'auto', 'car',
+                    'vehicle', 'policy', 'finance', *GENERIC_FACET_CONTEXT,
+                }
                 if not qualifiers <= matched:
                     continue
             if documents:

@@ -18,9 +18,21 @@ an authenticated operator accepts it.
    An accepted version remains immutable; a later edit creates another draft.
 
 The deterministic generator is deliberately extractive. It does not call a model,
-make a compliance decision, or claim that a proposed follow-up was completed.
+make a compliance decision, assign a quality score, or claim that a proposed follow-up was completed.
 Follow-up actions use the `proposed` state until a future workflow explicitly owns
 execution and completion.
+
+## Conversation recovery signals
+
+The fallback draft also looks for explicit customer requests to repeat or clarify
+something in the supported English, Taglish, and Bahasa patterns. When it finds one, it links the request and the next recorded agent turn,
+then labels the result as a review signal—not a conclusion about quality or whether
+the customer was satisfied. This makes the signal safe to use as a QA shortcut while
+leaving the decision with the reviewer. No signal is shown when no such cue is found.
+
+Every new transcript turn is ordered (`sequence`) and includes elapsed milliseconds
+from the call's `started_at` time. This is provider-neutral metadata for reconstructing
+the call; it is reception timing, not a claim about the precise timing of remote audio.
 
 ## Evidence model
 

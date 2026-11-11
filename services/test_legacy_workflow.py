@@ -24,6 +24,7 @@ class LegacyWorkflowTests(unittest.TestCase):
             with TestClient(rag.app) as client:
                 cases = [
                     ('india-loan', 'What is the minimum age?', r'(?i)age.*\d', 'loan'),
+                    ('india-loan', 'What is the minimum age requirement for a loan?', r'(?i)age.*\d', 'loan'),
                     ('india-loan', 'What is the minimum age and salary to avail loan?', r'(?i)minimum monthly income', 'loan'),
                     ('india-loan', 'What documents are required for a personal loan?', r'(?i)PAN', 'loan'),
                     ('india-loan', 'What are the loan options available?', r'(?i)personal loan.*home loan', 'loan'),

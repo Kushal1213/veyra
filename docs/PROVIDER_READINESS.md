@@ -44,5 +44,6 @@ Current expected findings:
   adapter. Contract tests cover embedding request shape, 3,072-dimensional
   output configuration, generation settings, missing configuration, and client
   lifecycle. The embedding model and dimension were intentionally unchanged.
-- Vapi fallback configuration includes an OpenAI model path that needs account
-  and data-handling review before live use.
+- The local demo uses browser speech and keeps Vapi disabled. Vapi is fail-closed until `PUBLIC_WEBHOOK_URL` is a public HTTPS endpoint, `VOICE_SERVICE_TOKEN` is set, and both Vapi credential IDs are configured. Saved assistants use authenticated `server` callbacks rather than legacy `serverUrl` fields.
+  Its configured model is Veyra's custom grounded endpoint, never a provider-hosted
+  fallback model.

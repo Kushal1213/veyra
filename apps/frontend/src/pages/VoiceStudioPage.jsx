@@ -43,6 +43,9 @@ function VoiceWave({ level, active }) {
 }
 function MessageBubble({ msg, turnIndex }) {
   const isUser = msg.role === 'user';
+  const elapsedLabel = Number.isFinite(msg.elapsed_ms) && msg.elapsed_ms >= 0
+    ? `+${Math.floor(msg.elapsed_ms / 60_000)}:${String(Math.floor(msg.elapsed_ms / 1_000) % 60).padStart(2, '0')}`
+    : null;
   return (
     <article
       id={Number.isInteger(turnIndex) ? `live-turn-${turnIndex}` : undefined}
@@ -61,6 +64,7 @@ function MessageBubble({ msg, turnIndex }) {
             })}
           </time>
         )}
+        {elapsedLabel && <span>{elapsedLabel}</span>}
         {msg.isPartial && <span>Transcribing…</span>}
       </div>
       <p className="message-content">{msg.content}</p>

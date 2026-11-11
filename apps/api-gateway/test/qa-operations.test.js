@@ -273,8 +273,9 @@ test('operational controls and manual QA remain enforced, attributable, and cont
     const generated = await api('/voice/history/qa-call/summary');
     assert.equal(generated.status, 200);
     assert.equal(generated.data.latest.version, 1);
-    assert.equal(generated.data.latest.generator, 'deterministic_fallback.v1');
+    assert.equal(generated.data.latest.generator, 'deterministic_fallback.v2');
     assert.equal(generated.data.latest.state, 'draft');
+    assert.ok(generated.data.latest.sections.some((section) => section.id === 'conversation_quality'));
     assert.ok(generated.data.latest.sections.some((section) =>
       section.items.some((item) => item.evidence.some((entry) => entry.kind === 'turn'))));
 

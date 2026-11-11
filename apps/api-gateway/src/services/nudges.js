@@ -9,7 +9,7 @@ const inputSchema = z.object({
   confidence: z.number().min(0).max(1).nullable().optional().default(null),
   suggested_response: z.string().trim().min(1).max(8000).optional(),
   context_query: z.string().trim().min(1).max(8000).optional(),
-  sources: z.array(z.record(z.unknown())).max(5).optional().default([]),
+  sources: z.array(z.record(z.string(), z.unknown())).max(5).optional().default([]),
   origin: z.enum(['customer_turn', 'operator_query']).optional().default('customer_turn'),
   requested_by: z.string().trim().min(1).max(200).nullable().optional().default(null),
   latency_ms: z.number().min(0).optional().default(0),

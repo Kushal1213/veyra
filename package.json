@@ -17,6 +17,7 @@
     "test:tenants": "node --test scripts/tenant-runtime.test.mjs",
     "test:provider-inventory": "node --test scripts/provider-inventory.test.mjs",
     "test:grounding": "python services/grounding_eval.py --output evaluation/grounding_report.json",
+    "test:e2e:local": "node scripts/e2e-local-smoke.mjs",
     "build": "npm run build --workspace apps/frontend",
     "audit:production": "npm audit --omit=dev",
     "audit:all": "npm audit",

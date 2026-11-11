@@ -74,7 +74,7 @@ test('voice sessions, handoff, archive and restart', { timeout: 30000 }, async (
       env: { ...process.env, NODE_ENV: 'test', PORT: String(port), CALL_HISTORY_DIR: directory, VEYRA_DATABASE_PATH: join(directory, 'test.sqlite'),
         VOICE_SERVICE_TOKEN: 'test-provider-token-with-at-least-32-characters',
         RAG_SERVICE_URL: `http://127.0.0.1:${mock.address().port}`,
-        INSIGHTS_SERVICE_URL: `http://127.0.0.1:${mock.address().port}`, LOG_LEVEL: 'silent' },
+        INSIGHTS_SERVICE_URL: `http://127.0.0.1:${mock.address().port}`, VAPI_API_KEY: '', PUBLIC_WEBHOOK_URL: '', LOG_LEVEL: 'silent' },
       stdio: 'ignore',
     });
     for (let attempt = 0; attempt < 80; attempt += 1) {
@@ -138,6 +138,8 @@ test('voice sessions, handoff, archive and restart', { timeout: 30000 }, async (
     assert.equal(turn.data.session.state.confidence, null);
     assert.equal(turn.data.sources[0].chunk_id, 'income-1');
     assert.equal(turn.data.sources[0].page, 7);
+    assert.deepEqual(turn.data.session.turns.map((entry) => entry.sequence), [1, 2]);
+    assert.ok(turn.data.session.turns.every((entry) => Number.isInteger(entry.elapsed_ms) && entry.elapsed_ms >= 0));
     assert.equal(retrieveBodies.at(-1).market, 'india');
     assert.equal(retrieveBodies.at(-1).product, 'loan');
     const playbook = await api('/session/review-call/playbook');
@@ -149,6 +151,25 @@ test('voice sessions, handoff, archive and restart', { timeout: 30000 }, async (
     assert.ok(playbook.data.playbook.next_step.action.text);
     const repeated = await api('/session', { call_id: 'review-call' });
     assert.equal(repeated.data.session.turns.length, 2);
+  });
+
+  await t.test('Vapi fails closed rather than falling back to an ungrounded model', async () => {
+    const config = await api('/../vapi/assistant-config?market=india-loan');
+    assert.equal(config.status, 503);
+    assert.equal(config.data.code, 'VAPI_WEBHOOK_UNAVAILABLE');
+    assert.match(config.data.error, /publicly reachable HTTPS/i);
+  });
+
+  await t.test('after-call summaries flag only observable clarification recovery signals', async () => {
+    assert.equal((await api('/query', { call_id: 'recovery-call', query: 'Could you repeat that? I am confused.' })).status, 200);
+    assert.equal((await api('/session/recovery-call/end', {})).status, 200);
+    const summary = await api('/history/recovery-call/summary');
+    assert.equal(summary.status, 200);
+    assert.equal(summary.data.latest.generator, 'deterministic_fallback.v2');
+    const recovery = summary.data.latest.sections.find((section) => section.id === 'conversation_quality');
+    assert.equal(recovery.items.length, 1);
+    assert.match(recovery.items[0].text, /without an explicit acknowledgement or clarification cue/i);
+    assert.deepEqual(recovery.items[0].evidence.map((entry) => entry.turn_index), [0, 1]);
   });
 
   await t.test('voice market IDs are scoped before retrieval', async () => {
@@ -371,7 +392,7 @@ test('voice sessions, handoff, archive and restart', { timeout: 30000 }, async (
     assert.deepEqual(events.map((event) => event.action), ['created', 'acknowledged', 'useful']);
     assert.ok(events[1].actor_id);
     const history = await api('/history?limit=1&offset=0');
-    assert.equal(history.data.total, 7);
+    assert.equal(history.data.total, 8);
     assert.equal(history.data.calls.length, 1);
     assert.equal(history.data.calls[0].turns, undefined);
     assert.equal((await api('/session/review-call')).data.escalations.length, 1);

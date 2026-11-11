@@ -4,19 +4,23 @@ import { z } from 'zod';
 
 import { getDatabase } from './database.js';
 
-const SCHEMA_VERSION = 'call-summary.v1';
-const FALLBACK_GENERATOR = 'deterministic_fallback.v1';
+const SCHEMA_VERSION = 'call-summary.v2';
+const FALLBACK_GENERATOR = 'deterministic_fallback.v2';
 const SECTION_IDS = [
   'customer_intent',
   'customer_facts',
   'assistance_provided',
+  'conversation_quality',
   'unresolved_issues',
   'handoff_state',
   'next_actions',
 ];
 
+const REPAIR_CUE = /\b(?:could you (?:repeat|say that again|explain|clarify)|can you (?:repeat|say that again|explain|clarify)|please (?:repeat|explain|clarify)|(?:i (?:do not|don't) understand)|(?:i am|i'm) confused|what do you mean|say that again|p(?:wede|uwede) mo bang ulitin|pakiulit|hindi ko maintindihan|nalilito ako|ano(?:ng)? ibig sabihin|bisa (?:di)?ulangi|tolong ulangi|saya (?:tidak|tak) mengerti|saya bingung|apa maksud(?:nya)?)\b/i;
+const REPAIR_RESPONSE_CUE = /(?:\b(?:sorry|understand|repeat|rephrase)\b|\b(?:apologi[sz]|clarif|explain)\w*|\blet me (?:put|explain|clarify)\b|pasensya|paumanhin|naiintindihan|ipaliwanag|ulitin|maaf|mengerti|jelas(?:kan)?|ulang)/i;
+
 const revisionSchema = z.object({
-  sections: z.record(z.string().max(4_000)).default({}),
+  sections: z.record(z.string(), z.string().max(4_000)).default({}),
   follow_up_actions: z.array(z.string().trim().min(1).max(1_000)).max(10).default([]),
 }).strict();
 
@@ -67,6 +71,52 @@ function section(id, title, items) {
 
 function item(text, evidence = [], maximum = 280) {
   return { id: randomUUID(), text: cleanText(text, maximum), evidence };
+}
+
+function nextAssistantTurn(session, afterIndex) {
+  for (let index = afterIndex + 1; index < (session.turns?.length || 0); index += 1) {
+    if (session.turns[index].role === 'assistant') return index;
+    if (session.turns[index].role === 'user') return -1;
+  }
+  return -1;
+}
+
+function conversationQualityItems(session) {
+  const repairTurns = (session.turns || [])
+    .map((turn, turnIndex) => ({ turn, turnIndex }))
+    .filter(({ turn }) => turn.role === 'user' && REPAIR_CUE.test(turn.content || ''))
+    .slice(0, 3);
+
+  return repairTurns.map(({ turnIndex }) => {
+    const responseIndex = nextAssistantTurn(session, turnIndex);
+    if (responseIndex < 0) {
+      return item(
+        'A customer clarification or repeat request was detected, but no subsequent agent response was recorded. Review the recovery.',
+        turnEvidence(session, turnIndex),
+      );
+    }
+
+    const response = session.turns[responseIndex];
+    const evidence = [...turnEvidence(session, turnIndex), ...turnEvidence(session, responseIndex)];
+    if (REPAIR_RESPONSE_CUE.test(response.content || '')) {
+      return item(
+        'The response after a customer clarification or repeat request contains an acknowledgement or clarification cue. Review whether it resolved the concern.',
+        evidence,
+      );
+    }
+    return item(
+      'A customer clarification or repeat request was followed by an agent response without an explicit acknowledgement or clarification cue. Review the recovery.',
+      evidence,
+    );
+  });
+}
+
+function callDurationMs(session) {
+  const startedAt = Date.parse(session.started_at || session.created_at || '');
+  const endedAt = Date.parse(session.ended_at || '');
+  return Number.isFinite(startedAt) && Number.isFinite(endedAt)
+    ? Math.max(0, endedAt - startedAt)
+    : null;
 }
 
 function intentDescription(intent) {
@@ -133,6 +183,7 @@ function buildDraft(session) {
       ]),
       section('customer_facts', 'Customer-stated facts', facts),
       section('assistance_provided', 'Assistance provided', assistance),
+      section('conversation_quality', 'Conversation recovery signals', conversationQualityItems(session)),
       section('unresolved_issues', 'Unresolved issues', unresolved),
       section('handoff_state', 'Handoff state', handoffItems),
       section('next_actions', 'Recommended next actions', nextActions),
@@ -192,8 +243,10 @@ function createRecord({ session, version, generator, createdBy = null, parentSum
     input_hash: snapshotHash(session),
     parent_summary_id: parentSummaryId,
     source_snapshot: {
+      started_at: session.started_at || session.created_at,
       ended_at: session.ended_at,
       turn_count: session.turns?.length || 0,
+      duration_ms: callDurationMs(session),
     },
     created_by: createdBy,
     created_at: now,

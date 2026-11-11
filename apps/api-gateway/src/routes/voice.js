@@ -280,7 +280,7 @@ async function processVoiceTurn({ callId, query, market, language, recordUser = 
   const startedAt = Date.now();
   const session = getOrCreateSession(callId, { market, language });
   recoverKnowledgeHandoff(session);
-  const userTurn = { role: 'user', content: query, ts: new Date().toISOString() };
+  const userTurn = createTranscriptTurn(session, { role: 'user', content: query, origin: 'browser' });
 
   if (recordUser) {
     session.turns.push(userTurn);
@@ -298,7 +298,7 @@ async function processVoiceTurn({ callId, query, market, language, recordUser = 
   if (handoff) {
     session.state.current_stage = 'escalation';
     const answer = 'Your request for human assistance has been recorded. A team member will need to take over this conversation.';
-    const turn = { role: 'assistant', content: answer, sources: [], ts: new Date().toISOString() };
+    const turn = createTranscriptTurn(session, { role: 'assistant', content: answer, sources: [], origin: 'browser' });
     session.turns.push(turn);
     emitTurn(callId, turn);
     return { call_id: callId, answer, sources: [], session, escalation: handoff, latency_ms: Date.now() - startedAt };
@@ -307,7 +307,9 @@ async function processVoiceTurn({ callId, query, market, language, recordUser = 
   const greeting = conversationalReply(query, session.market);
   if (greeting) {
     session.state.current_stage = 'intent_capture';
-    const turn = { role: 'assistant', content: greeting, sources: [], response_kind: 'conversation', ts: new Date().toISOString() };
+    const turn = createTranscriptTurn(session, {
+      role: 'assistant', content: greeting, sources: [], response_kind: 'conversation', origin: 'browser',
+    });
     session.turns.push(turn);
     emitTurn(callId, turn);
     return { call_id: callId, answer: greeting, sources: [], response_kind: 'conversation', session, escalation: null, latency_ms: Date.now() - startedAt };
@@ -315,14 +317,14 @@ async function processVoiceTurn({ callId, query, market, language, recordUser = 
 
   if (!isOperationalControlEnabled('customer_answer_generation')) {
     const answer = 'Automated knowledge answers are temporarily paused. I can still record a request for human assistance.';
-    const turn = {
+    const turn = createTranscriptTurn(session, {
       role: 'assistant',
       content: answer,
       sources: [],
       response_kind: 'operational_pause',
       latency_ms: Date.now() - startedAt,
-      ts: new Date().toISOString(),
-    };
+      origin: 'browser',
+    });
     session.turns.push(turn);
     session.state.current_stage = 'restricted';
     emitTurn(callId, turn);
@@ -364,10 +366,10 @@ async function processVoiceTurn({ callId, query, market, language, recordUser = 
       question: query,
     });
   }
-  const assistantTurn = {
+  const assistantTurn = createTranscriptTurn(session, {
     role: 'assistant', content: answer, sources, abstention_reason: reason,
-    response_kind: supportedAnswer ? 'grounded' : 'clarification', latency_ms: totalMs, ts: new Date().toISOString(),
-  };
+    response_kind: supportedAnswer ? 'grounded' : 'clarification', latency_ms: totalMs, origin: 'browser',
+  });
   if (guidedMode && supportedAnswer) {
     const documentNames = [...new Set(sources.map((source) => source.title || source.source).filter(Boolean))];
     const result = getNudgeStore().create(callId, {
@@ -458,12 +460,14 @@ router.post('/webhook', async (req, res) => {
       // assistant/agent/bot). Normalize once so both the session snapshot and
       // the Python detector receive a role they understand.
       const normalizedRole = role === 'customer' || role === 'user' ? 'user' : 'assistant';
-      const turn = { role: normalizedRole, content: transcript, ts: new Date().toISOString() };
       const session = getOrCreateSession(call_id);
+      let turn = createTranscriptTurn(session, { role: normalizedRole, content: transcript, origin: 'vapi' });
       const previousTurn = session.turns.at(-1);
       const isDuplicate = previousTurn?.role === turn.role && previousTurn.content === turn.content;
       if (!isDuplicate) {
         session.turns.push(turn);
+      } else {
+        turn = previousTurn;
       }
       if (normalizedRole === 'user') {
         updateConversationState(session, transcript);
@@ -816,7 +820,7 @@ router.post('/session/:id/nudges/:nudgeId/apply', (req, res) => {
   let turn;
   try {
     const result = store.apply(current.id, req.session.userId, { responseText }, (nudge, appliedResponse) => {
-      turn = {
+      turn = createTranscriptTurn(session, {
         role: 'assistant',
         content: appliedResponse,
         sources: nudge.sources || [],
@@ -825,8 +829,8 @@ router.post('/session/:id/nudges/:nudgeId/apply', (req, res) => {
         guided_by_user_id: req.session.userId,
         guided_was_edited: appliedResponse !== nudge.suggested_response,
         guided_original_response: appliedResponse !== nudge.suggested_response ? nudge.suggested_response : undefined,
-        ts: new Date().toISOString(),
-      };
+        origin: 'guided_review',
+      });
       session.turns.push(turn);
       appended = true;
       session.state.current_stage = 'answering';
@@ -986,10 +990,12 @@ async function closeInsightsCall(callId) {
 // ── Helpers ──────────────────────────────────────────────────
 
 function createSession(call_id, overrides = {}) {
+  const startedAt = new Date().toISOString();
   return {
     call_id,
     workspace_id: 'default',
-    created_at: new Date().toISOString(),
+    created_at: startedAt,
+    started_at: startedAt,
     language: overrides.language || 'en',
     market: overrides.market || 'india-loan',
     channel: overrides.channel || 'voice',
@@ -1010,7 +1016,18 @@ function createSession(call_id, overrides = {}) {
       missing_fields: [],
     },
     status: 'created',
-    last_activity: new Date().toISOString(),
+    last_activity: startedAt,
+  };
+}
+
+function createTranscriptTurn(session, fields, observedAt = new Date()) {
+  const observedAtMs = observedAt.getTime();
+  const sessionStartedAt = Date.parse(session.started_at || session.created_at || '');
+  return {
+    ...fields,
+    ts: observedAt.toISOString(),
+    sequence: (session.turns?.length || 0) + 1,
+    elapsed_ms: Number.isFinite(sessionStartedAt) ? Math.max(0, observedAtMs - sessionStartedAt) : null,
   };
 }
 

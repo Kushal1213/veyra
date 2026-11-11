@@ -91,7 +91,9 @@ Set at least the following value in `.env`:
 GEMINI_API_KEY=your_gemini_api_key
 ```
 
-The default local service URLs and ports in `.env.example` work with the included startup scripts. Vapi and Deepgram credentials are optional unless those providers are used.
+The default local service URLs and ports in `.env.example` work with the included startup scripts. The local demo uses the browser Web Speech API and its text fallback; it does not need Vapi or a public webhook. Vapi and Deepgram credentials are optional unless those providers are used. Vapi additionally requires a public HTTPS `PUBLIC_WEBHOOK_URL`; Veyra refuses to configure it without that callback so provider calls cannot bypass grounded retrieval, handoff, or audit controls.
+
+For a real Vapi deployment, set `VOICE_SERVICE_TOKEN` to a random value of at least 32 characters, then create two Vapi credentials that use that token: a **Server Configuration** bearer credential and a **Custom LLM** API-key credential. Put their IDs in `VAPI_SERVER_CREDENTIAL_ID` and `VAPI_CUSTOM_LLM_CREDENTIAL_ID`. The saved assistant is configured with the current `server` object and those credential IDs; it never saves an unauthenticated callback.
 
 ### Run
 
@@ -102,6 +104,10 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000). The command starts the frontend, API gateway, RAG service, ingestion service, and realtime-insights service together. Press `Ctrl+C` to stop them.
+
+With the local stack running, use `npm run test:e2e:local` for a disposable
+end-to-end check. It uses the live local RAG and realtime-insights services but
+creates its own temporary workspace, database, calls, and sessions.
 
 To run services independently:
 
@@ -270,11 +276,16 @@ Important environment variables are documented in `.env.example`.
 |---|---|---|
 | `GEMINI_API_KEY` | Gemini generation access | Required for live Gemini responses |
 | `GEMINI_MODEL` | Generation model | `gemini-2.5-flash` |
-| `PORT` | API gateway port | `3001` |
-| `RAG_SERVICE_URL` | RAG service address | `http://localhost:8001` |
+| `PORT` | API gateway port | `3004` |
+| `RAG_SERVICE_URL` | RAG service address | `http://localhost:8006` |
 | `INGESTION_SERVICE_URL` | Ingestion service address | `http://localhost:8002` |
 | `REALTIME_AI_URL` | Realtime-insights address | `http://localhost:8003` |
 | `VAPI_API_KEY` | Optional Vapi integration | Unset |
+| `VITE_VAPI_PUBLIC_KEY` | Optional public Vapi browser identifier; never a secret | Unset |
+| `PUBLIC_WEBHOOK_URL` | Required public HTTPS callback base for grounded Vapi calls | Unset |
+| `VOICE_SERVICE_TOKEN` | Server-only callback token; required for real Vapi calls | Unset |
+| `VAPI_SERVER_CREDENTIAL_ID` | Vapi Server Configuration credential ID | Unset |
+| `VAPI_CUSTOM_LLM_CREDENTIAL_ID` | Vapi Custom LLM credential ID | Unset |
 | `DEEPGRAM_API_KEY` | Optional Deepgram integration | Unset |
 
 Never commit `.env` or provider credentials.

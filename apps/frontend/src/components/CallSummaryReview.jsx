@@ -225,7 +225,9 @@ export default function CallSummaryReview({ callId, onNavigateEvidence }) {
               <section key={section.id} aria-labelledby={`summary-${section.id}`}>
                 <h3 id={`summary-${section.id}`} className="text-xs font-semibold">{section.title}</h3>
                 {section.items.length === 0 ? (
-                  <p className="text-xs text-muted mt-2">Nothing recorded.</p>
+                  <p className="text-xs text-muted mt-2">
+                    {section.id === 'conversation_quality' ? 'No deterministic review signal was detected.' : 'Nothing recorded.'}
+                  </p>
                 ) : (
                   <ul className="space-y-3 mt-2">
                     {section.items.map((entry) => (

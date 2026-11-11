@@ -11,10 +11,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
  * GET /api/vapi/assistant-config
- * Returns { assistantId } — created/upserted server-side via Vapi REST API.
- * Frontend calls vapi.start(assistantId) which is more reliable than inline config.
- *
- * Falls back to inline config object if VAPI_API_KEY is not set.
+ * Returns a Vapi assistant configuration that always sends conversational turns
+ * through Veyra's authenticated, grounded custom-LLM endpoint. A public HTTPS
+ * callback is required; falling back to a provider-hosted model would bypass the
+ * product's RAG, escalation, and audit controls.
  */
 router.get('/assistant-config', async (req, res) => {
   try {
@@ -40,10 +40,52 @@ router.get('/assistant-config', async (req, res) => {
     } catch (_e) { /* use default */ }
 
     const privateKey = process.env.VAPI_API_KEY;
-    const publicUrl = process.env.PUBLIC_WEBHOOK_URL || '';
+    const publicUrl = (process.env.PUBLIC_WEBHOOK_URL || '').replace(/\/+$/, '');
     const hasPublicUrl = publicUrl && !publicUrl.includes('localhost') && publicUrl.startsWith('https://');
+    if (!hasPublicUrl) {
+      return res.status(503).json({
+        code: 'VAPI_WEBHOOK_UNAVAILABLE',
+        error: 'Vapi voice requires a publicly reachable HTTPS PUBLIC_WEBHOOK_URL so all answers remain grounded by Veyra.',
+      });
+    }
 
-    // ── Option A: Use Vapi REST API to create assistant (most reliable) ──
+    // Vapi runs outside the browser and has no Veyra session cookie. Refuse to
+    // provision an assistant unless both callback surfaces are protected with
+    // the same server-only bearer token. This avoids saving an assistant that
+    // will immediately receive 401 responses from the gateway.
+    if ((process.env.VOICE_SERVICE_TOKEN || '').length < 32) {
+      return res.status(503).json({
+        code: 'VAPI_CALLBACK_AUTH_UNAVAILABLE',
+        error: 'Set a random VOICE_SERVICE_TOKEN of at least 32 characters before configuring Vapi callbacks.',
+      });
+    }
+
+    // Vapi stores credentials separately from an assistant. A server
+    // credential authenticates lifecycle webhooks; a custom-LLM credential
+    // authenticates the OpenAI-compatible streaming endpoint. They can use
+    // the same VOICE_SERVICE_TOKEN but have distinct Vapi credential IDs.
+    const webhookCredentialId = (process.env.VAPI_SERVER_CREDENTIAL_ID || '').trim();
+    const customLlmCredentialId = (process.env.VAPI_CUSTOM_LLM_CREDENTIAL_ID || '').trim();
+    if (!webhookCredentialId || !customLlmCredentialId) {
+      return res.status(503).json({
+        code: 'VAPI_CREDENTIAL_UNAVAILABLE',
+        error: 'Create Vapi server and custom-LLM credentials, then set VAPI_SERVER_CREDENTIAL_ID and VAPI_CUSTOM_LLM_CREDENTIAL_ID.',
+      });
+    }
+    const credentialIds = [...new Set([webhookCredentialId, customLlmCredentialId])];
+
+    const model = {
+      provider: 'custom-llm',
+      // Preserve the selected regional agent when Vapi invokes the custom LLM
+      // endpoint; otherwise every call would fall back to India.
+      url: `${publicUrl}/api/voice/vapi-llm?market=${encodeURIComponent(market)}`,
+      model: 'veyra-rag',
+      messages: [{ role: 'system', content: systemPrompt }],
+      temperature: 0.2,
+      maxTokens: 200,
+    };
+
+    // ── Option A: Use Vapi REST API to create or update a grounded assistant ──
     if (privateKey && privateKey !== 'your_vapi_api_key') {
       try {
         const assistantPayload = {
@@ -55,34 +97,20 @@ router.get('/assistant-config', async (req, res) => {
             language: agent.lang,
             smartFormat: true,
           },
-          model: hasPublicUrl
-            ? {
-                provider: 'custom-llm',
-                // Preserve the selected regional agent when Vapi invokes the
-                // custom LLM endpoint; otherwise every call fell back to India.
-                url: `${publicUrl}/api/voice/vapi-llm?market=${encodeURIComponent(market)}`,
-                model: 'veyra-rag',
-                messages: [{ role: 'system', content: systemPrompt }],
-                temperature: 0.2,
-                maxTokens: 200,
-              }
-            : {
-                provider: 'openai',
-                model: 'gpt-4o-mini',
-                messages: [{ role: 'system', content: systemPrompt }],
-                temperature: 0.2,
-                maxTokens: 150,
-              },
+          model,
           voice: {
             provider: 'deepgram',
             voiceId: agent.voice,
           },
+          credentialIds,
+          server: {
+            url: `${publicUrl}/api/voice/webhook`,
+            timeoutSeconds: 20,
+            credentialId: webhookCredentialId,
+          },
           silenceTimeoutSeconds: 30,
           maxDurationSeconds: 600,
           endCallMessage: `Thank you for speaking with ${agent.name}. Have a great day!`,
-          ...(hasPublicUrl && {
-            serverUrl: `${publicUrl}/api/voice/webhook`,
-          }),
         };
 
         // Upsert: check if assistant already exists for this market
@@ -115,31 +143,31 @@ router.get('/assistant-config', async (req, res) => {
           logger.info({ assistantId, market }, 'Vapi assistant created');
         }
 
-        return res.json({ assistantId, mode: hasPublicUrl ? 'rag-grounded' : 'built-in' });
+        return res.json({ assistantId, mode: 'rag-grounded' });
       } catch (vapiErr) {
-        logger.error({ err: vapiErr?.response?.data || vapiErr.message }, 'Vapi API call failed, falling back to inline config');
+        logger.error({ err: vapiErr?.response?.data || vapiErr.message }, 'Vapi API call failed, returning grounded inline config');
         // Fall through to inline config
       }
     }
 
-    // ── Option B: Inline config fallback (no Vapi API key or API call failed) ──
-    logger.warn('Using inline assistant config fallback');
+    // ── Option B: Grounded inline config (no private Vapi API key or API failure) ──
+    logger.warn('Returning grounded inline Vapi assistant config');
     const inlineConfig = {
       name: `${agent.name} - Veyra Voice Agent`,
       firstMessage: `Hello! I'm ${agent.name}, your Veyra financial assistant. How can I help?`,
       transcriber: { provider: 'deepgram', model: 'nova-2', language: agent.lang },
-      model: {
-        provider: 'openai',
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'system', content: systemPrompt }],
-        temperature: 0.2,
-        maxTokens: 150,
-      },
+      model,
       voice: { provider: 'deepgram', voiceId: agent.voice },
+      credentialIds,
+      server: {
+        url: `${publicUrl}/api/voice/webhook`,
+        timeoutSeconds: 20,
+        credentialId: webhookCredentialId,
+      },
       silenceTimeoutSeconds: 30,
       maxDurationSeconds: 600,
     };
-    res.json(inlineConfig);
+    res.json({ ...inlineConfig, mode: 'rag-grounded' });
 
   } catch (err) {
     logger.error(err, 'Failed to build Vapi assistant config');
